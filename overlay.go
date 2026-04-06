@@ -33,6 +33,12 @@ func NewOverlayBuilder() *OverlayBuilder {
 	return &OverlayBuilder{}
 }
 
+// createOverlay creates an overlay Space from a Spec.
+func createOverlay(spec Spec) (Space, error) {
+	b := NewOverlayBuilder()
+	return b.Create(spec.Workspace)
+}
+
 // Create mounts a fuse-overlayfs overlay over the workspace.
 // The agent sees the merged view; writes go to an upper layer.
 // The real workspace is never modified until Commit().
