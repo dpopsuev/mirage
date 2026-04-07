@@ -23,6 +23,10 @@ test-e2e-netns:
 lint:
 	golangci-lint run ./...
 
+# Lint only new changes (used by pre-commit hook)
+lint-new:
+	golangci-lint run --new-from-rev=HEAD ./...
+
 # Build
 build:
 	go build ./...

@@ -1,0 +1,145 @@
+# golangci-lint config — aligned with Lex pragmatic rules
+
+run:
+  timeout: 5m
+  build-tags:
+    - integration
+    - e2e
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    # --- Default / essential ---
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - gosimple
+    - typecheck
+
+    # --- Lex: go-best-practices ---
+    - goconst
+    - errorlint
+    - nestif
+    - gocritic
+    - prealloc
+    - thelper
+
+    # --- Lex: code-smells ---
+    - gocyclo
+    - funlen
+    - dupl
+
+    # --- Lex: naming ---
+    - revive
+    - misspell
+
+    # --- Lex: solid ---
+    - goimports
+    - unconvert
+    - unparam
+
+    # --- Lex: error discipline ---
+    - err113
+    - sloglint
+
+    # --- Security ---
+    - gosec
+
+linters-settings:
+  goconst:
+    min-len: 2
+    min-occurrences: 3
+
+  errorlint:
+    errorf: true
+    asserts: true
+    comparison: true
+
+  nestif:
+    min-complexity: 5
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+      - opinionated
+    settings:
+      hugeParam:
+        sizeThreshold: 256
+
+  gocyclo:
+    min-complexity: 20
+
+  funlen:
+    lines: 120
+    statements: 70
+
+  dupl:
+    threshold: 100
+
+  misspell:
+    locale: US
+
+  revive:
+    rules:
+      - name: exported
+        disabled: true
+      - name: unexported-return
+        disabled: false
+      - name: blank-imports
+        disabled: false
+      - name: context-as-argument
+        disabled: false
+      - name: error-return
+        disabled: false
+      - name: error-naming
+        disabled: false
+      - name: increment-decrement
+        disabled: false
+      - name: var-declaration
+        disabled: false
+      - name: range
+        disabled: false
+      - name: receiver-naming
+        disabled: false
+
+  prealloc:
+    simple: true
+    range-loops: true
+    for-loops: false
+
+  sloglint:
+    static-msg: true
+    no-raw-keys: true
+    key-naming-case: snake
+
+  thelper:
+    test:
+      begin: true
+
+issues:
+  exclude-use-default: true
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - funlen
+        - dupl
+        - goconst
+        - gosec
+        - err113
+        - prealloc
+        - gocyclo
+        - nestif
+    - path: testkit/
+      linters:
+        - errcheck
+        - unused
+        - funlen
+        - err113
