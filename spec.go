@@ -94,9 +94,11 @@ const (
 
 // ResourceLimits controls cgroup resource constraints.
 type ResourceLimits struct {
-	Memory    string // human-readable: "512MB", "2GB"
+	Memory    string // human-readable: "512MB", "2GB" → memory.max
 	CPUWeight int    // 1-10000 (cgroup cpu.weight)
+	CPUMax    string // "$MAX $PERIOD" in microseconds → cpu.max (empty = unlimited)
 	IOWeight  int    // 1-10000 (cgroup io.weight)
+	PIDMax    int    // max tasks (cgroup pids.max), 0 = unlimited
 }
 
 // NamespaceConfig controls which Linux namespaces to create.
@@ -107,6 +109,7 @@ type NamespaceConfig struct {
 	Network bool // network isolation (requires NetworkPolicy)
 	IPC     bool // inter-process communication isolation
 	UTS     bool // hostname isolation
+	Cgroup  bool // hide host cgroup paths from container
 }
 
 // --- Validation methods ---
@@ -152,8 +155,35 @@ func (r ResourceLimits) Validate() error {
 	if r.CPUWeight < 0 || r.CPUWeight > 10000 {
 		return fmt.Errorf("mirage: cpu_weight must be 0-10000, got %d", r.CPUWeight)
 	}
+	if r.CPUMax != "" {
+		if err := validateCPUMax(r.CPUMax); err != nil {
+			return err
+		}
+	}
 	if r.IOWeight < 0 || r.IOWeight > 10000 {
 		return fmt.Errorf("mirage: io_weight must be 0-10000, got %d", r.IOWeight)
+	}
+	if r.PIDMax < 0 {
+		return fmt.Errorf("mirage: pid_max cannot be negative, got %d", r.PIDMax)
+	}
+	return nil
+}
+
+// validateCPUMax checks that CPUMax is either "max $PERIOD" or "$MAX $PERIOD".
+func validateCPUMax(s string) error {
+	parts := strings.Fields(s)
+	if len(parts) != 2 {
+		return fmt.Errorf("mirage: cpu_max must be \"$MAX $PERIOD\", got %q", s)
+	}
+	if parts[0] != "max" {
+		max, err := strconv.ParseInt(parts[0], 10, 64)
+		if err != nil || max <= 0 {
+			return fmt.Errorf("mirage: cpu_max quota must be positive integer or \"max\", got %q", parts[0])
+		}
+	}
+	period, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || period <= 0 {
+		return fmt.Errorf("mirage: cpu_max period must be positive integer, got %q", parts[1])
 	}
 	return nil
 }
@@ -162,8 +192,8 @@ func (r ResourceLimits) Validate() error {
 func (n NamespaceConfig) Validate() error {
 	// If any namespace beyond User+Mount is requested, User must be set
 	// (unprivileged namespace creation requires user namespace).
-	if (n.PID || n.Network || n.IPC || n.UTS) && !n.User {
-		return errors.New("mirage: user namespace required when enabling PID, Network, IPC, or UTS namespaces")
+	if (n.PID || n.Network || n.IPC || n.UTS || n.Cgroup) && !n.User {
+		return errors.New("mirage: user namespace required when enabling PID, Network, IPC, UTS, or Cgroup namespaces")
 	}
 	return nil
 }

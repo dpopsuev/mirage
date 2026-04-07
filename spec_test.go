@@ -70,6 +70,16 @@ func TestResourceLimits_Validate(t *testing.T) {
 		{"valid KB", ResourceLimits{Memory: "1024KB"}, false},
 		{"valid GB", ResourceLimits{Memory: "4GB"}, false},
 		{"valid bytes", ResourceLimits{Memory: "1073741824"}, false},
+		{"valid pid_max", ResourceLimits{PIDMax: 100}, false},
+		{"negative pid_max", ResourceLimits{PIDMax: -1}, true},
+		{"zero pid_max", ResourceLimits{PIDMax: 0}, false},
+		{"valid cpu_max", ResourceLimits{CPUMax: "200000 100000"}, false},
+		{"cpu_max with max quota", ResourceLimits{CPUMax: "max 100000"}, false},
+		{"cpu_max missing period", ResourceLimits{CPUMax: "200000"}, true},
+		{"cpu_max bad quota", ResourceLimits{CPUMax: "abc 100000"}, true},
+		{"cpu_max bad period", ResourceLimits{CPUMax: "200000 abc"}, true},
+		{"cpu_max zero period", ResourceLimits{CPUMax: "200000 0"}, true},
+		{"cpu_max negative quota", ResourceLimits{CPUMax: "-1 100000"}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -121,7 +131,8 @@ func TestNamespaceConfig_Validate(t *testing.T) {
 		{"network without user", NamespaceConfig{Mount: true, Network: true}, true},
 		{"pid without user", NamespaceConfig{Mount: true, PID: true}, true},
 		{"empty is valid", NamespaceConfig{}, false}, // no namespaces = overlay only
-		{"full", NamespaceConfig{User: true, Mount: true, PID: true, Network: true, IPC: true, UTS: true}, false},
+		{"full", NamespaceConfig{User: true, Mount: true, PID: true, Network: true, IPC: true, UTS: true, Cgroup: true}, false},
+		{"cgroup without user", NamespaceConfig{Mount: true, Cgroup: true}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

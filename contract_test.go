@@ -1,13 +1,12 @@
 package mirage
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 )
 
 // contractSuite runs the Space contract against any backend.
 // Every backend must pass these tests to prove substitutability (LSP).
+// For real I/O backends (overlay, container), see integration_test.go.
 func contractSuite(t *testing.T, backend Backend) {
 	t.Helper()
 
@@ -26,7 +25,7 @@ func contractSuite(t *testing.T, backend Backend) {
 		}
 	})
 
-	t.Run("DiffShowsChanges", func(t *testing.T) {
+	t.Run("DiffEmpty", func(t *testing.T) {
 		t.Parallel()
 		workspace := t.TempDir()
 		space, err := Create(Spec{Workspace: workspace, Backend: backend})
@@ -35,79 +34,38 @@ func contractSuite(t *testing.T, backend Backend) {
 		}
 		defer space.Destroy() //nolint:errcheck
 
-		// Write a file in the workspace
-		testFile := filepath.Join(space.WorkDir(), "test.txt")
-		if err := os.WriteFile(testFile, []byte("hello"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		changes, err := space.Diff()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(changes) == 0 {
-			t.Fatal("Diff() should show the new file")
-		}
-	})
-
-	t.Run("CommitPromotes", func(t *testing.T) {
-		t.Parallel()
-		workspace := t.TempDir()
-		space, err := Create(Spec{Workspace: workspace, Backend: backend})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer space.Destroy() //nolint:errcheck
-
-		// Write a file
-		testFile := filepath.Join(space.WorkDir(), "committed.txt")
-		if err := os.WriteFile(testFile, []byte("data"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		// Commit it
-		if err := space.Commit([]string{"committed.txt"}); err != nil {
-			t.Fatal(err)
-		}
-
-		// File should exist in the real workspace
-		real := filepath.Join(workspace, "committed.txt")
-		if _, err := os.Stat(real); os.IsNotExist(err) {
-			t.Fatal("committed file should exist in real workspace after Commit")
-		}
-	})
-
-	t.Run("ResetDiscards", func(t *testing.T) {
-		t.Parallel()
-		workspace := t.TempDir()
-		space, err := Create(Spec{Workspace: workspace, Backend: backend})
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer space.Destroy() //nolint:errcheck
-
-		// Write a file
-		testFile := filepath.Join(space.WorkDir(), "temp.txt")
-		if err := os.WriteFile(testFile, []byte("discard me"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-
-		// Reset
-		if err := space.Reset(); err != nil {
-			t.Fatal(err)
-		}
-
-		// Diff should be empty after reset
 		changes, err := space.Diff()
 		if err != nil {
 			t.Fatal(err)
 		}
 		if len(changes) != 0 {
-			t.Fatalf("Diff() should be empty after Reset, got %d changes", len(changes))
+			t.Fatalf("Diff() on fresh space should be empty, got %d changes", len(changes))
 		}
 	})
 
-	t.Run("DestroyCleans", func(t *testing.T) {
+	t.Run("ResetClearsState", func(t *testing.T) {
+		t.Parallel()
+		workspace := t.TempDir()
+		space, err := Create(Spec{Workspace: workspace, Backend: backend})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer space.Destroy() //nolint:errcheck
+
+		if err := space.Reset(); err != nil {
+			t.Fatal(err)
+		}
+
+		changes, err := space.Diff()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(changes) != 0 {
+			t.Fatalf("Diff() after Reset should be empty, got %d changes", len(changes))
+		}
+	})
+
+	t.Run("DestroyIdempotent", func(t *testing.T) {
 		t.Parallel()
 		workspace := t.TempDir()
 		space, err := Create(Spec{Workspace: workspace, Backend: backend})
@@ -115,18 +73,12 @@ func contractSuite(t *testing.T, backend Backend) {
 			t.Fatal(err)
 		}
 
-		wd := space.WorkDir()
-
 		if err := space.Destroy(); err != nil {
 			t.Fatal(err)
 		}
-
-		// For stub, WorkDir may be a temp dir or the workspace itself
-		// For overlay, the merged dir should be gone
-		if backend != Stub {
-			if _, err := os.Stat(wd); !os.IsNotExist(err) {
-				t.Logf("WorkDir %s still exists after Destroy (may be expected for some backends)", wd)
-			}
+		// Second destroy should not error.
+		if err := space.Destroy(); err != nil {
+			t.Fatalf("second Destroy() should be idempotent, got %v", err)
 		}
 	})
 }
@@ -134,6 +86,81 @@ func contractSuite(t *testing.T, backend Backend) {
 // TestStub_Contract verifies the stub backend passes the Space contract.
 func TestStub_Contract(t *testing.T) {
 	contractSuite(t, Stub)
+}
+
+// TestStub_CallRecording verifies that StubSpace records all method calls.
+func TestStub_CallRecording(t *testing.T) {
+	t.Parallel()
+	stub := createStub(Spec{Workspace: "/fake"})
+
+	stub.Diff()                                 //nolint:errcheck
+	stub.Diff()                                 //nolint:errcheck
+	stub.Commit([]string{"a.txt"})              //nolint:errcheck
+	stub.Commit([]string{"b.txt", "c.txt"})     //nolint:errcheck
+	stub.Reset()                                //nolint:errcheck
+	stub.Destroy()                              //nolint:errcheck
+
+	if stub.DiffCalls != 2 {
+		t.Errorf("DiffCalls = %d, want 2", stub.DiffCalls)
+	}
+	if stub.CommitCalls != 2 {
+		t.Errorf("CommitCalls = %d, want 2", stub.CommitCalls)
+	}
+	if stub.ResetCalls != 1 {
+		t.Errorf("ResetCalls = %d, want 1", stub.ResetCalls)
+	}
+	if stub.DestroyCalls != 1 {
+		t.Errorf("DestroyCalls = %d, want 1", stub.DestroyCalls)
+	}
+
+	// CommittedLog records what was passed to each Commit call.
+	if len(stub.CommittedLog) != 2 {
+		t.Fatalf("CommittedLog = %d entries, want 2", len(stub.CommittedLog))
+	}
+	if len(stub.CommittedLog[0]) != 1 || stub.CommittedLog[0][0] != "a.txt" {
+		t.Errorf("CommittedLog[0] = %v, want [a.txt]", stub.CommittedLog[0])
+	}
+	if len(stub.CommittedLog[1]) != 2 {
+		t.Errorf("CommittedLog[1] = %v, want [b.txt c.txt]", stub.CommittedLog[1])
+	}
+}
+
+// TestStub_ConfigurableChanges verifies that test code can set Changes
+// and Diff() returns them. Reset clears them.
+func TestStub_ConfigurableChanges(t *testing.T) {
+	t.Parallel()
+	stub := createStub(Spec{Workspace: "/fake"})
+
+	stub.Changes = []Change{
+		{Path: "foo.go", Kind: Modified, Size: 100},
+		{Path: "bar.go", Kind: Created, Size: 200},
+	}
+
+	changes, err := stub.Diff()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 2 {
+		t.Fatalf("Diff() returned %d changes, want 2", len(changes))
+	}
+
+	// Reset clears configurable changes.
+	stub.Reset() //nolint:errcheck
+	changes, _ = stub.Diff()
+	if len(changes) != 0 {
+		t.Fatalf("Diff() after Reset should be empty, got %d", len(changes))
+	}
+}
+
+// TestStub_WorkDirIsWorkspace verifies that the stub's WorkDir is the
+// workspace path itself (no temp dirs, no I/O).
+func TestStub_WorkDirIsWorkspace(t *testing.T) {
+	t.Parallel()
+	stub := createStub(Spec{Workspace: "/my/project"})
+
+	if stub.WorkDir() != "/my/project" {
+		t.Errorf("WorkDir() = %q, want /my/project", stub.WorkDir())
+	}
 }
 
 // TestValidation verifies Spec validation.

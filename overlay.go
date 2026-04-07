@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -36,7 +37,14 @@ func NewOverlayBuilder() *OverlayBuilder {
 // createOverlay creates an overlay Space from a Spec.
 func createOverlay(spec Spec) (Space, error) {
 	b := NewOverlayBuilder()
-	return b.Create(spec.Workspace)
+	s, err := b.Create(spec.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	if len(spec.RWPaths) > 0 {
+		s.(*overlaySpace).rwPaths = spec.RWPaths
+	}
+	return s, nil
 }
 
 // Create mounts a fuse-overlayfs overlay over the workspace.
@@ -96,6 +104,7 @@ type overlaySpace struct {
 	work    string // overlayfs scratch
 	merged  string // what the agent sees
 	tempDir string
+	rwPaths []string // if set, only these paths are visible in Diff/Commit
 
 	mu      sync.Mutex
 	mounted bool
@@ -122,9 +131,19 @@ func (s *overlaySpace) Diff() ([]Change, error) {
 
 		rel, _ := filepath.Rel(s.upper, path)
 
+		// Skip overlayfs whiteout/opaque files.
+		base := filepath.Base(rel)
+		if strings.HasPrefix(base, ".wh.") {
+			return nil
+		}
+
 		kind := Created
 		if _, statErr := os.Stat(filepath.Join(s.lower, rel)); statErr == nil {
 			kind = Modified
+		}
+
+		if !s.isWritable(rel) {
+			return nil // outside RWPaths, skip
 		}
 
 		changes = append(changes, Change{
@@ -146,6 +165,9 @@ func (s *overlaySpace) Commit(paths []string) error {
 	}
 
 	for _, p := range paths {
+		if !s.isWritable(p) {
+			return fmt.Errorf("mirage: commit %s: path not in RWPaths", p)
+		}
 		src := filepath.Join(s.upper, p)
 		dst := filepath.Join(s.lower, p)
 
@@ -174,11 +196,18 @@ func (s *overlaySpace) Reset() error {
 		return ErrNotMounted
 	}
 
-	// Remove all files in upper, recreate the directory.
-	if err := os.RemoveAll(s.upper); err != nil {
-		return fmt.Errorf("mirage: reset upper: %w", err)
+	// Clear contents of upper without removing the directory itself.
+	// Removing+recreating the dir confuses the FUSE daemon's cached FD.
+	entries, err := os.ReadDir(s.upper)
+	if err != nil {
+		return fmt.Errorf("mirage: reset read upper: %w", err)
 	}
-	return os.MkdirAll(s.upper, 0o755)
+	for _, e := range entries {
+		if err := os.RemoveAll(filepath.Join(s.upper, e.Name())); err != nil {
+			return fmt.Errorf("mirage: reset remove %s: %w", e.Name(), err)
+		}
+	}
+	return nil
 }
 
 func (s *overlaySpace) Destroy() error {
@@ -198,4 +227,18 @@ func (s *overlaySpace) Destroy() error {
 	}
 
 	return os.RemoveAll(s.tempDir)
+}
+
+// isWritable checks if a relative path falls under the configured RWPaths.
+// If RWPaths is empty, all paths are writable (default).
+func (s *overlaySpace) isWritable(rel string) bool {
+	if len(s.rwPaths) == 0 {
+		return true // no filter = all writable
+	}
+	for _, rw := range s.rwPaths {
+		if rel == rw || strings.HasPrefix(rel, rw+"/") {
+			return true
+		}
+	}
+	return false
 }

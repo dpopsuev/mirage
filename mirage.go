@@ -23,7 +23,7 @@ func Create(spec Spec) (Space, error) {
 	case Stub:
 		return createStub(spec), nil
 	case Container:
-		return nil, fmt.Errorf("%w: container backend not yet implemented", ErrUnknownBackend)
+		return createContainer(spec)
 	case Sandbox:
 		return nil, fmt.Errorf("%w: sandbox backend not yet implemented", ErrUnknownBackend)
 	default:
