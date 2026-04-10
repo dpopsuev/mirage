@@ -8,9 +8,13 @@
 // as their shared overlay contract.
 package mirage
 
+import "fmt"
+
 // Space is an isolated agent workspace with copy-on-write semantics.
 // Reads pass through to the real workspace. Writes are captured in
 // a separate layer. Diff shows what changed. Commit promotes changes.
+//
+// Seven verbs: Create, Diff, Commit, Reset, Snapshot, Restore, Destroy.
 type Space interface {
 	// Diff returns files changed since the space was created.
 	Diff() ([]Change, error)
@@ -21,6 +25,17 @@ type Space interface {
 
 	// Reset discards all overlay changes. The real workspace is untouched.
 	Reset() error
+
+	// Snapshot saves the current overlay state as a named snapshot.
+	// Multiple snapshots can coexist. Used for undo tree branching.
+	Snapshot(name string) error
+
+	// Restore replaces the current overlay with a named snapshot.
+	// Current changes are discarded. The snapshot itself is preserved.
+	Restore(name string) error
+
+	// Snapshots returns the names of all saved snapshots.
+	Snapshots() []string
 
 	// Destroy tears down the space and removes all temp directories.
 	Destroy() error
@@ -36,6 +51,12 @@ type Change struct {
 	Kind ChangeKind `json:"kind"`
 	Size int64      `json:"size,omitempty"` // bytes (0 for deleted)
 }
+
+// Sentinel errors for Snapshot/Restore.
+var (
+	ErrSnapshotNotFound = fmt.Errorf("mirage: snapshot not found")
+	ErrSnapshotNotImpl  = fmt.Errorf("mirage: snapshot not implemented")
+)
 
 // ChangeKind classifies what happened to a file.
 type ChangeKind string
